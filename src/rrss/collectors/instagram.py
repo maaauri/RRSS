@@ -163,31 +163,51 @@ class InstagramCollector(CollectorBase):
     # --- Fallback con instaloader ---
 
     def _crear_loader(self):
-        """Crear instancia de instaloader con login opcional."""
+        """Crear instancia de instaloader con sesión guardada o login.
+
+        Prioridad:
+        1. Cargar sesión guardada (más fiable, evita bloqueos)
+        2. Login con usuario/contraseña
+        3. Sin autenticación (puede dar 403)
+
+        Para crear una sesión, ejecuta en la terminal:
+            instaloader --login TU_USUARIO
+        Esto guarda la sesión en ~/.config/instaloader/session-TU_USUARIO
+        """
         import instaloader
 
         loader = instaloader.Instaloader()
 
-        # Login opcional para evitar 403
+        # 1. Intentar cargar sesión guardada
+        if INSTAGRAM_USERNAME:
+            try:
+                loader.load_session_from_file(INSTAGRAM_USERNAME)
+                logger.info(f"Sesión de Instagram cargada para @{INSTAGRAM_USERNAME}")
+                return loader
+            except FileNotFoundError:
+                logger.info(
+                    f"No se encontró sesión guardada para @{INSTAGRAM_USERNAME}. "
+                    f"Ejecuta: instaloader --login {INSTAGRAM_USERNAME}"
+                )
+            except Exception as e:
+                logger.warning(f"No se pudo cargar la sesión: {e}")
+
+        # 2. Intentar login directo
         if INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD:
             try:
                 loader.login(INSTAGRAM_USERNAME, INSTAGRAM_PASSWORD)
                 logger.info("Login en Instagram exitoso.")
-            except instaloader.exceptions.BadCredentialsException:
-                logger.error("Credenciales de Instagram incorrectas.")
-            except instaloader.exceptions.TwoFactorAuthRequiredException:
-                logger.error(
-                    "La cuenta requiere 2FA. Usa una cuenta sin 2FA o "
-                    "configura un token de Meta Graph API."
-                )
+                return loader
             except Exception as e:
                 logger.warning(f"No se pudo hacer login: {e}")
-        else:
-            logger.info(
-                "Sin credenciales de Instagram. Si obtienes error 403, "
-                "configura INSTAGRAM_USERNAME y INSTAGRAM_PASSWORD en .env"
-            )
 
+        # 3. Sin autenticación
+        logger.warning(
+            "Usando instaloader sin autenticación. "
+            "Si obtienes error 403, ejecuta:\n"
+            "  instaloader --login TU_USUARIO\n"
+            "Y configura INSTAGRAM_USERNAME en .env"
+        )
         return loader
 
     def _obtener_perfil_scraping(self, nombre_usuario: str) -> Optional[Perfil]:

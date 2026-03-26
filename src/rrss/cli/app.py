@@ -131,6 +131,55 @@ def cli(ctx, db: str, verbose: bool):
 
 @cli.command()
 @click.argument("usuario")
+def login(usuario: str):
+    """Iniciar sesión en Instagram para evitar errores 403.
+
+    Guarda la sesión localmente para que los análisis funcionen sin bloqueos.
+    Ejecutar una sola vez: rrss login mi_usuario_instagram
+    """
+    try:
+        import instaloader
+    except ImportError:
+        consola.print("[red]instaloader no está instalado. Ejecuta: pip install instaloader[/red]")
+        return
+
+    consola.print(
+        Panel(
+            f"Iniciando sesión en Instagram como @{usuario}...\n"
+            "Se te pedirá tu contraseña de forma segura.",
+            border_style="magenta",
+        )
+    )
+
+    import getpass
+    password = getpass.getpass(f"Contraseña de @{usuario}: ")
+
+    loader = instaloader.Instaloader()
+    try:
+        loader.login(usuario, password)
+        loader.save_session_to_file()
+        consola.print(f"\n[green]✓ Sesión guardada exitosamente para @{usuario}[/green]")
+        consola.print(
+            f"[dim]Ahora configura INSTAGRAM_USERNAME={usuario} en tu .env[/dim]"
+        )
+    except instaloader.exceptions.TwoFactorAuthRequiredException:
+        consola.print("[yellow]Se requiere código de verificación 2FA.[/yellow]")
+        codigo = input("Código 2FA: ")
+        try:
+            loader.two_factor_login(codigo)
+            loader.save_session_to_file()
+            consola.print(f"\n[green]✓ Sesión guardada con 2FA para @{usuario}[/green]")
+            consola.print(
+                f"[dim]Ahora configura INSTAGRAM_USERNAME={usuario} en tu .env[/dim]"
+            )
+        except Exception as e:
+            consola.print(f"[red]Error con 2FA: {e}[/red]")
+    except Exception as e:
+        consola.print(f"[red]Error al iniciar sesión: {e}[/red]")
+
+
+@cli.command()
+@click.argument("usuario")
 @click.option(
     "--plataforma",
     "-p",
