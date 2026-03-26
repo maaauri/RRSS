@@ -23,11 +23,16 @@ class InstagramCollector(CollectorBase):
 
     plataforma = Plataforma.INSTAGRAM
 
+    # Valores placeholder que indican que el .env no fue configurado
+    _TOKENS_PLACEHOLDER = {"tu-token-de-acceso", "tu-token", "", None}
+
     def __init__(self):
         self._token = META_ACCESS_TOKEN
-        self._usar_api = bool(self._token)
+        self._usar_api = bool(
+            self._token and self._token not in self._TOKENS_PLACEHOLDER
+        )
         if not self._usar_api:
-            logger.info("Sin token de Meta. Usando instaloader como fallback.")
+            logger.info("Sin token válido de Meta. Usando instaloader como fallback.")
 
     # --- API Oficial (Meta Graph API) ---
 
