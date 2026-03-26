@@ -11,7 +11,12 @@ from typing import Optional
 
 import httpx
 
-from rrss.config import META_ACCESS_TOKEN, META_BASE_URL
+from rrss.config import (
+    INSTAGRAM_PASSWORD,
+    INSTAGRAM_USERNAME,
+    META_ACCESS_TOKEN,
+    META_BASE_URL,
+)
 from rrss.models.base import Comentario, Perfil, Plataforma, Publicacion, TipoContenido
 from rrss.collectors.base import CollectorBase
 
@@ -157,12 +162,40 @@ class InstagramCollector(CollectorBase):
 
     # --- Fallback con instaloader ---
 
+    def _crear_loader(self):
+        """Crear instancia de instaloader con login opcional."""
+        import instaloader
+
+        loader = instaloader.Instaloader()
+
+        # Login opcional para evitar 403
+        if INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD:
+            try:
+                loader.login(INSTAGRAM_USERNAME, INSTAGRAM_PASSWORD)
+                logger.info("Login en Instagram exitoso.")
+            except instaloader.exceptions.BadCredentialsException:
+                logger.error("Credenciales de Instagram incorrectas.")
+            except instaloader.exceptions.TwoFactorAuthRequiredException:
+                logger.error(
+                    "La cuenta requiere 2FA. Usa una cuenta sin 2FA o "
+                    "configura un token de Meta Graph API."
+                )
+            except Exception as e:
+                logger.warning(f"No se pudo hacer login: {e}")
+        else:
+            logger.info(
+                "Sin credenciales de Instagram. Si obtienes error 403, "
+                "configura INSTAGRAM_USERNAME y INSTAGRAM_PASSWORD en .env"
+            )
+
+        return loader
+
     def _obtener_perfil_scraping(self, nombre_usuario: str) -> Optional[Perfil]:
         """Obtener perfil usando instaloader (perfiles públicos)."""
         try:
             import instaloader
 
-            loader = instaloader.Instaloader()
+            loader = self._crear_loader()
             profile = instaloader.Profile.from_username(loader.context, nombre_usuario)
 
             return Perfil(
@@ -181,7 +214,15 @@ class InstagramCollector(CollectorBase):
             logger.error("instaloader no está instalado.")
             return None
         except Exception as e:
-            logger.error(f"Error al obtener perfil con instaloader: {e}")
+            msg = str(e)
+            if "403" in msg or "Forbidden" in msg:
+                logger.error(
+                    f"Instagram bloqueó la petición (403 Forbidden). "
+                    f"Configura INSTAGRAM_USERNAME y INSTAGRAM_PASSWORD en .env "
+                    f"para autenticarte, o usa un token de Meta Graph API."
+                )
+            else:
+                logger.error(f"Error al obtener perfil con instaloader: {e}")
             return None
 
     def _obtener_publicaciones_scraping(
@@ -191,7 +232,7 @@ class InstagramCollector(CollectorBase):
         try:
             import instaloader
 
-            loader = instaloader.Instaloader()
+            loader = self._crear_loader()
             profile = instaloader.Profile.from_username(loader.context, nombre_usuario)
 
             publicaciones = []
@@ -239,7 +280,7 @@ class InstagramCollector(CollectorBase):
         try:
             import instaloader
 
-            loader = instaloader.Instaloader()
+            loader = self._crear_loader()
             post = instaloader.Post.from_shortcode(loader.context, publicacion_id)
 
             comentarios = []

@@ -33,5 +33,9 @@ TIKTOK_BASE_URL = "https://open.tiktokapis.com/v2"
 # --- General ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+# --- Instaloader (login opcional para evitar 403) ---
+INSTAGRAM_USERNAME = os.getenv("INSTAGRAM_USERNAME", "")
+INSTAGRAM_PASSWORD = os.getenv("INSTAGRAM_PASSWORD", "")
+
 # Asegurar que exista el directorio de datos
 RUTA_DATOS.mkdir(parents=True, exist_ok=True)
