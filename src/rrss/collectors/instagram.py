@@ -231,15 +231,28 @@ class InstagramCollector(CollectorBase):
                 es_verificado=profile.is_verified,
             )
         except ImportError:
-            logger.error("instaloader no está instalado.")
+            logger.error(
+                "instaloader no está instalado. Ejecuta: pip install instaloader"
+            )
             return None
         except Exception as e:
             msg = str(e)
-            if "403" in msg or "Forbidden" in msg:
+            if "does not exist" in msg:
+                logger.error(
+                    f"El perfil @{nombre_usuario} no existe en Instagram. "
+                    f"Verifica que el nombre de usuario sea exacto "
+                    f"(revisa en instagram.com/{nombre_usuario})."
+                )
+            elif "403" in msg or "Forbidden" in msg:
                 logger.error(
                     f"Instagram bloqueó la petición (403 Forbidden). "
-                    f"Configura INSTAGRAM_USERNAME y INSTAGRAM_PASSWORD en .env "
-                    f"para autenticarte, o usa un token de Meta Graph API."
+                    f"Ejecuta: rrss login TU_USUARIO  y configura "
+                    f"INSTAGRAM_USERNAME en .env"
+                )
+            elif "private" in msg.lower() or "is private" in msg.lower():
+                logger.error(
+                    f"El perfil @{nombre_usuario} es privado. "
+                    f"Solo se pueden analizar perfiles públicos."
                 )
             else:
                 logger.error(f"Error al obtener perfil con instaloader: {e}")
