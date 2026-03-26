@@ -6,6 +6,7 @@ para perfiles públicos.
 
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -222,26 +223,60 @@ class InstagramCollector(CollectorBase):
         )
         return loader
 
+    def _ejecutar_con_reintentos(self, funcion, descripcion: str, reintentos: int = 3):
+        """Ejecutar una función con reintentos para manejar rate limiting.
+
+        Instagram puede devolver 401/429 con "Please wait a few minutes".
+        Este wrapper espera y reintenta automáticamente.
+        """
+        for intento in range(reintentos):
+            try:
+                return funcion()
+            except Exception as e:
+                msg = str(e)
+                es_rate_limit = (
+                    "Please wait" in msg
+                    or "401" in msg
+                    or "429" in msg
+                    or "few minutes" in msg
+                )
+                if es_rate_limit and intento < reintentos - 1:
+                    espera = 30 * (intento + 1)  # 30s, 60s, 90s
+                    logger.warning(
+                        f"Rate limiting de Instagram en {descripcion}. "
+                        f"Esperando {espera}s antes de reintentar "
+                        f"({intento + 1}/{reintentos})..."
+                    )
+                    time.sleep(espera)
+                else:
+                    raise
+        return None
+
     def _obtener_perfil_scraping(self, nombre_usuario: str) -> Optional[Perfil]:
         """Obtener perfil usando instaloader (perfiles públicos)."""
         try:
             import instaloader
 
             loader = self._crear_loader()
-            profile = instaloader.Profile.from_username(loader.context, nombre_usuario)
 
-            return Perfil(
-                id=str(profile.userid),
-                nombre_usuario=profile.username,
-                nombre_completo=profile.full_name,
-                plataforma=Plataforma.INSTAGRAM,
-                seguidores=profile.followers,
-                siguiendo=profile.followees,
-                total_publicaciones=profile.mediacount,
-                biografia=profile.biography,
-                url_avatar=profile.profile_pic_url,
-                es_verificado=profile.is_verified,
-            )
+            def _obtener():
+                profile = instaloader.Profile.from_username(
+                    loader.context, nombre_usuario
+                )
+                return Perfil(
+                    id=str(profile.userid),
+                    nombre_usuario=profile.username,
+                    nombre_completo=profile.full_name,
+                    plataforma=Plataforma.INSTAGRAM,
+                    seguidores=profile.followers,
+                    siguiendo=profile.followees,
+                    total_publicaciones=profile.mediacount,
+                    biografia=profile.biography,
+                    url_avatar=profile.profile_pic_url,
+                    es_verificado=profile.is_verified,
+                )
+
+            return self._ejecutar_con_reintentos(_obtener, "obtener perfil")
         except ImportError:
             logger.error(
                 "instaloader no está instalado. Ejecuta: pip install instaloader"
@@ -256,6 +291,11 @@ class InstagramCollector(CollectorBase):
                     f"  1. El nombre de usuario no existe (verifica en instagram.com/{nombre_usuario})\n"
                     f"  2. La sesión de Instagram expiró (ejecuta: rrss login TU_USUARIO)\n"
                     f"  3. El perfil es privado o fue suspendido"
+                )
+            elif "401" in msg or "Please wait" in msg:
+                logger.error(
+                    f"Instagram aplicó rate limiting. "
+                    f"Espera unos minutos e intenta de nuevo."
                 )
             elif "403" in msg or "Forbidden" in msg:
                 logger.error(
