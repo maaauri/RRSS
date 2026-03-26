@@ -6,6 +6,7 @@ para perfiles públicos.
 
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -166,13 +167,12 @@ class InstagramCollector(CollectorBase):
         """Crear instancia de instaloader con sesión guardada o login.
 
         Prioridad:
-        1. Cargar sesión guardada (más fiable, evita bloqueos)
+        1. Cargar sesión guardada y verificar que siga activa
         2. Login con usuario/contraseña
         3. Sin autenticación (puede dar 403)
 
-        Para crear una sesión, ejecuta en la terminal:
-            instaloader --login TU_USUARIO
-        Esto guarda la sesión en ~/.config/instaloader/session-TU_USUARIO
+        Para crear/renovar una sesión, ejecuta:
+            rrss login TU_USUARIO
         """
         import instaloader
 
@@ -182,12 +182,25 @@ class InstagramCollector(CollectorBase):
         if INSTAGRAM_USERNAME:
             try:
                 loader.load_session_from_file(INSTAGRAM_USERNAME)
-                logger.info(f"Sesión de Instagram cargada para @{INSTAGRAM_USERNAME}")
-                return loader
+                # Verificar si la sesión sigue activa
+                try:
+                    loader.test_login()
+                    logger.info(
+                        f"Sesión de Instagram activa para @{INSTAGRAM_USERNAME}"
+                    )
+                    return loader
+                except Exception:
+                    logger.warning(
+                        f"La sesión de @{INSTAGRAM_USERNAME} expiró. "
+                        f"Renuévala con: rrss login {INSTAGRAM_USERNAME}"
+                    )
+                    # Continuar con la sesión de todas formas, puede funcionar
+                    # para algunas operaciones
+                    return loader
             except FileNotFoundError:
                 logger.info(
-                    f"No se encontró sesión guardada para @{INSTAGRAM_USERNAME}. "
-                    f"Ejecuta: instaloader --login {INSTAGRAM_USERNAME}"
+                    f"No se encontró sesión para @{INSTAGRAM_USERNAME}. "
+                    f"Ejecuta: rrss login {INSTAGRAM_USERNAME}"
                 )
             except Exception as e:
                 logger.warning(f"No se pudo cargar la sesión: {e}")
@@ -196,7 +209,8 @@ class InstagramCollector(CollectorBase):
         if INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD:
             try:
                 loader.login(INSTAGRAM_USERNAME, INSTAGRAM_PASSWORD)
-                logger.info("Login en Instagram exitoso.")
+                loader.save_session_to_file()
+                logger.info("Login en Instagram exitoso. Sesión guardada.")
                 return loader
             except Exception as e:
                 logger.warning(f"No se pudo hacer login: {e}")
@@ -204,11 +218,39 @@ class InstagramCollector(CollectorBase):
         # 3. Sin autenticación
         logger.warning(
             "Usando instaloader sin autenticación. "
-            "Si obtienes error 403, ejecuta:\n"
-            "  instaloader --login TU_USUARIO\n"
-            "Y configura INSTAGRAM_USERNAME en .env"
+            "Si obtienes errores, ejecuta: rrss login TU_USUARIO "
+            "y configura INSTAGRAM_USERNAME en .env"
         )
         return loader
+
+    def _ejecutar_con_reintentos(self, funcion, descripcion: str, reintentos: int = 3):
+        """Ejecutar una función con reintentos para manejar rate limiting.
+
+        Instagram puede devolver 401/429 con "Please wait a few minutes".
+        Este wrapper espera y reintenta automáticamente.
+        """
+        for intento in range(reintentos):
+            try:
+                return funcion()
+            except Exception as e:
+                msg = str(e)
+                es_rate_limit = (
+                    "Please wait" in msg
+                    or "401" in msg
+                    or "429" in msg
+                    or "few minutes" in msg
+                )
+                if es_rate_limit and intento < reintentos - 1:
+                    espera = 30 * (intento + 1)  # 30s, 60s, 90s
+                    logger.warning(
+                        f"Rate limiting de Instagram en {descripcion}. "
+                        f"Esperando {espera}s antes de reintentar "
+                        f"({intento + 1}/{reintentos})..."
+                    )
+                    time.sleep(espera)
+                else:
+                    raise
+        return None
 
     def _obtener_perfil_scraping(self, nombre_usuario: str) -> Optional[Perfil]:
         """Obtener perfil usando instaloader (perfiles públicos)."""
@@ -216,30 +258,55 @@ class InstagramCollector(CollectorBase):
             import instaloader
 
             loader = self._crear_loader()
-            profile = instaloader.Profile.from_username(loader.context, nombre_usuario)
 
-            return Perfil(
-                id=str(profile.userid),
-                nombre_usuario=profile.username,
-                nombre_completo=profile.full_name,
-                plataforma=Plataforma.INSTAGRAM,
-                seguidores=profile.followers,
-                siguiendo=profile.followees,
-                total_publicaciones=profile.mediacount,
-                biografia=profile.biography,
-                url_avatar=profile.profile_pic_url,
-                es_verificado=profile.is_verified,
-            )
+            def _obtener():
+                profile = instaloader.Profile.from_username(
+                    loader.context, nombre_usuario
+                )
+                return Perfil(
+                    id=str(profile.userid),
+                    nombre_usuario=profile.username,
+                    nombre_completo=profile.full_name,
+                    plataforma=Plataforma.INSTAGRAM,
+                    seguidores=profile.followers,
+                    siguiendo=profile.followees,
+                    total_publicaciones=profile.mediacount,
+                    biografia=profile.biography,
+                    url_avatar=profile.profile_pic_url,
+                    es_verificado=profile.is_verified,
+                )
+
+            return self._ejecutar_con_reintentos(_obtener, "obtener perfil")
         except ImportError:
-            logger.error("instaloader no está instalado.")
+            logger.error(
+                "instaloader no está instalado. Ejecuta: pip install instaloader"
+            )
             return None
         except Exception as e:
             msg = str(e)
-            if "403" in msg or "Forbidden" in msg:
+            if "does not exist" in msg:
+                logger.error(
+                    f"El perfil @{nombre_usuario} no se encontró. "
+                    f"Esto puede significar:\n"
+                    f"  1. El nombre de usuario no existe (verifica en instagram.com/{nombre_usuario})\n"
+                    f"  2. La sesión de Instagram expiró (ejecuta: rrss login TU_USUARIO)\n"
+                    f"  3. El perfil es privado o fue suspendido"
+                )
+            elif "401" in msg or "Please wait" in msg:
+                logger.error(
+                    f"Instagram aplicó rate limiting. "
+                    f"Espera unos minutos e intenta de nuevo."
+                )
+            elif "403" in msg or "Forbidden" in msg:
                 logger.error(
                     f"Instagram bloqueó la petición (403 Forbidden). "
-                    f"Configura INSTAGRAM_USERNAME y INSTAGRAM_PASSWORD en .env "
-                    f"para autenticarte, o usa un token de Meta Graph API."
+                    f"Ejecuta: rrss login TU_USUARIO  y configura "
+                    f"INSTAGRAM_USERNAME en .env"
+                )
+            elif "private" in msg.lower() or "is private" in msg.lower():
+                logger.error(
+                    f"El perfil @{nombre_usuario} es privado. "
+                    f"Solo se pueden analizar perfiles públicos."
                 )
             else:
                 logger.error(f"Error al obtener perfil con instaloader: {e}")
