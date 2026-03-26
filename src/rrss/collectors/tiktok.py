@@ -23,11 +23,15 @@ class TikTokCollector(CollectorBase):
 
     plataforma = Plataforma.TIKTOK
 
+    _TOKENS_PLACEHOLDER = {"tu-token-de-acceso", "tu-token", "", None}
+
     def __init__(self):
         self._token = TIKTOK_ACCESS_TOKEN
-        self._usar_api = bool(self._token)
+        self._usar_api = bool(
+            self._token and self._token not in self._TOKENS_PLACEHOLDER
+        )
         if not self._usar_api:
-            logger.info("Sin token de TikTok. Usando TikTokApi como fallback.")
+            logger.info("Sin token válido de TikTok. Usando TikTokApi como fallback.")
 
     # --- API Oficial (TikTok for Business) ---
 
